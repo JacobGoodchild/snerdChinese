@@ -4,9 +4,34 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>snerdChinese</title>
+<meta name="description" content="Distraction-free HSK 1–6 vocabulary with character breakdowns and a slow-fading review heatmap." />
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23dcefe1'/><text x='50' y='72' font-size='64' text-anchor='middle' fill='%232b3a30'>学</text></svg>" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Noto+Sans+SC:wght@400;500&display=swap" rel="stylesheet" />
 </head>
 <body>
-<div id="app">snerdChinese — building…</div>
+<header class="top">
+  <a class="brand" href="#">snerd<span>中文</span></a>
+  <nav class="levels" id="levelNav"></nav>
+  <div class="meta">
+    <span id="totalCount"></span>
+    <span class="sep">·</span>
+    <button class="link" id="exportBtn">export</button>
+    <span class="sep">/</span>
+    <button class="link" id="importBtn">import</button>
+    <input type="file" id="importFile" accept="application/json,.json" hidden />
+    <span class="flash" id="flash"></span>
+  </div>
+</header>
+<main id="app"><p class="loading">loading…</p></main>
+<footer class="foot">
+  click a word to inspect · double-click or <kbd>space</kbd> to mark reviewed · <kbd>r</kbd> speak · <kbd>←</kbd><kbd>→</kbd> move · <kbd>esc</kbd> close
+  <br />
+  data: <a href="https://github.com/drkameleon/complete-hsk-vocabulary">complete-hsk-vocabulary</a> ·
+  <a href="https://github.com/skishore/makemeahanzi">Make Me a Hanzi</a> ·
+  <a href="https://tatoeba.org">Tatoeba</a> (CC-BY 2.0 FR)
+</footer>
 <script type="module" src="/src/main.ts"></script>
 </body>
 </html>
