@@ -10,6 +10,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
 import { pinyin } from 'pinyin-pro';
+import * as OpenCC from 'opencc-js';
+
+const toSimplified = OpenCC.Converter({ from: 't', to: 'cn' });
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
 const CACHE = path.join(ROOT, '.cache');
@@ -42,9 +45,10 @@ const lines = (f) => read(f).split('\n').filter(Boolean);
 // ---------- 1. HSK words ----------
 const LEVELS = [1, 2, 3, 4, 5, 6];
 const raw = JSON.parse(read('hsk.json'));
-const isVariant = (m) => /^(old |unofficial |archaic |)variant of|^see |^abbr\. for/i.test(m);
+const isVariant = (m) => /^(old |unofficial |archaic |)variant of|^see |^abbr\. for|^surname |^\(Tw\)|al-Qaeda|^used in /i.test(m);
 
 const words = []; // {s, level, p, e, alt}
+const spacedPinyin = new Map(); // word -> 'péng you' (dictionary pinyin, per syllable)
 for (const w of raw) {
   const old = w.level.filter((l) => l.startsWith('old-')).map((l) => +l.slice(4));
   if (!old.length) continue;
@@ -63,6 +67,7 @@ for (const w of raw) {
       break;
     }
   }
+  if (!spacedPinyin.has(w.simplified)) spacedPinyin.set(w.simplified, main.transcriptions.pinyin.toLowerCase());
   words.push({ s: w.simplified, level, freq: w.frequency, p, e, alt });
 }
 words.sort((a, b) => a.level - b.level || a.freq - b.freq);
@@ -74,16 +79,24 @@ for (const w of words) for (const c of w.s) if (!charLevel.has(c)) charLevel.set
 
 // ---------- 2. Example sentences (Tatoeba) ----------
 const PUNCT = '，。！？、：；“”‘’（）《》…—·「」 ';
+const HAN = /[\u4e00-\u9fff]/;
 const zh = new Map();
 for (const l of lines('cmn.tsv')) {
   const [id, , text] = l.split('\t');
-  const t = text.trim();
-  const han = [...t].filter((c) => !PUNCT.includes(c));
-  if (han.length < 4 || han.length > 22) continue;
-  // Keep only sentences written entirely in HSK 1–6 characters. This filters out
-  // traditional-script sentences and keeps the examples at a learnable level.
-  if (!han.every((c) => charLevel.has(c))) continue;
-  zh.set(id, { t, len: han.length, max: Math.max(...han.map((c) => charLevel.get(c))) });
+  const orig = text.trim();
+  // Traditional-script sentences are converted to simplified (a mechanical script change,
+  // not a rewrite); they're flagged so the UI can say so.
+  const t = toSimplified(orig);
+  const converted = t !== orig;
+  const chars = [...t];
+  const han = chars.filter((c) => !PUNCT.includes(c));
+  if (han.length < 4 || han.length > 26) continue;
+  // Only Chinese characters and Chinese punctuation (no Latin, digits or emoji).
+  if (!han.every((c) => HAN.test(c))) continue;
+  // Allow at most two characters beyond the HSK 1–6 set (they make the sentence harder, scored below).
+  const extra = han.filter((c) => !charLevel.has(c)).length;
+  if (extra > 2) continue;
+  zh.set(id, { t, converted, len: han.length, extra, max: Math.max(...han.map((c) => charLevel.get(c) ?? 7)) });
 }
 const zhToEn = new Map();
 for (const l of lines('cmn-eng.tsv')) {
@@ -131,28 +144,62 @@ const cleanHit = (text, w) => {
   return false;
 };
 
-const sentPinyin = (t) =>
-  pinyin(t, { toneType: 'symbol' })
-    .replace(/\s*([，。！？、：；）》」…—])\s*/g, (_, p) => ({ '，': ', ', '。': '. ', '！': '! ', '？': '? ', '、': ', ', '：': ': ', '；': '; ', '）': ') ', '》': '" ', '」': '" ', '…': '… ', '—': ' — ' })[p])
-    .replace(/\s*([（《「“”‘’])\s*/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+// Pinyin for a sentence, grouped into words: pinyin-pro reads each character in context
+// (so 了/的/还/一/不 come out right), then HSK words are joined up — 朋友 -> péngyou.
+const PMAP = { '，': ',', '。': '.', '！': '!', '？': '?', '、': ',', '：': ':', '；': ';', '…': '…', '—': '—', '“': '"', '”': '"', '‘': "'", '’': "'", '（': '(', '）': ')', '《': '"', '》': '"', '「': '"', '」': '"', '·': '·' };
+function sentPinyin(t) {
+  const chars = [...t];
+  const py = pinyin(t, { type: 'array', toneType: 'symbol' });
+  const out = [];
+  let i = 0;
+  while (i < chars.length) {
+    if (PUNCT.includes(chars[i])) {
+      const p = PMAP[chars[i]] ?? '';
+      if (out.length && /^[,.!?:;…)"']$/.test(p)) out[out.length - 1] += p; else if (p) out.push(p);
+      i++;
+      continue;
+    }
+    let len = 1;
+    for (let L = Math.min(4, chars.length - i); L > 1; L--) {
+      if (wordSet.has(chars.slice(i, i + L).join(''))) { len = L; break; }
+    }
+    const w = chars.slice(i, i + len).join('');
+    const ctx = py.slice(i, i + len);
+    const dict = spacedPinyin.get(w)?.split(' ');
+    // Prefer dictionary pinyin for multi-character words (it has the right neutral tones),
+    // except where tone-sandhi words 一/不 appear, which pinyin-pro handles in context.
+    const syl = len > 1 && dict && dict.length === len && !/[一不]/.test(w) ? dict : ctx;
+    out.push(syl.join(''));
+    i += len;
+  }
+  return out
+    .join(' ')
+    .replace(/\s+([,.!?:;…)])/g, '$1')
+    .replace(/(^|[.!?]\s+)(\p{Ll})/gu, (_, a, b) => a + b.toUpperCase());
+}
 
 const examples = Object.fromEntries(LEVELS.map((l) => [l, {}]));
 let found = 0;
 for (const w of words) {
   const pool = byChar.get(w.s[0]) || [];
-  let best, bestScore = Infinity;
+  const scored = [];
   for (const i of pool) {
     const s = sentences[i];
     if (!s.t.includes(w.s)) continue;
-    let score = 10 * Math.max(0, s.max - w.level) + 0.35 * Math.abs(s.len - 11);
+    let score = (s.converted ? 1.5 : 0) + 10 * Math.max(0, Math.min(s.max, 7) - w.level) + 6 * s.extra + 0.35 * Math.abs(s.len - 11);
     if (!cleanHit(s.t, w.s)) score += 12;
-    if (score < bestScore) { bestScore = score; best = s; }
+    scored.push([score, s]);
   }
-  if (best) {
+  scored.sort((a, b) => a[0] - b[0] || a[1].id - b[1].id);
+  const picked = [];
+  for (const [, s] of scored) {
+    if (picked.some((p) => p.t === s.t)) continue;
+    picked.push(s);
+    if (picked.length === 3) break;
+  }
+  if (picked.length) {
     found++;
-    examples[w.level][w.s] = [best.t, sentPinyin(best.t), best.en, best.id];
+    examples[w.level][w.s] = picked.map((s) => (s.converted ? [s.t, sentPinyin(s.t), s.en, s.id, 1] : [s.t, sentPinyin(s.t), s.en, s.id]));
   }
 }
 console.log(`example sentences found for ${found}/${words.length} words`);
@@ -187,10 +234,35 @@ fs.rmSync(OUT, { recursive: true, force: true });
 fs.mkdirSync(path.join(OUT, 'chars'), { recursive: true });
 fs.mkdirSync(path.join(OUT, 'ex'), { recursive: true });
 
-let charCount = 0;
-for (const c of charLevel.keys()) {
+// Visually confusable characters (hand-picked classic look-alike sets). Only members that
+// actually appear in HSK 1–6 are shown.
+const LOOKALIKES = [
+  '己已巳', '未末', '人入八', '土士', '日曰', '天夭', '大太犬', '王玉主', '刀力', '干千于', '午牛',
+  '白百', '失夫', '免兔', '贝见', '买卖', '今令', '问间', '休体', '找我', '住往', '鸟乌', '徒徙',
+  '折拆', '候侯', '辨辩辫', '历厉', '洒酒', '甲由申', '戊戌戍', '拔拨', '侍待', '季李', '准淮',
+  '晴睛', '情请清', '园圆', '坐座', '扬杨', '汗汁', '理埋', '烂栏', '幕幂', '贷货', '性姓',
+  '密蜜', '已经', '母毋', '儿几', '木本术', '目且', '狠很', '恨狠', '冒帽', '复夏', '拨拔',
+];
+const lookalikeOf = new Map();
+for (const group of LOOKALIKES) for (const c of group) {
+  const others = [...group].filter((x) => x !== c);
+  lookalikeOf.set(c, [...new Set([...(lookalikeOf.get(c) || []), ...others])]);
+}
+
+// Sound families: HSK characters grouped by the component that gives their sound.
+const hskChars = [...charLevel.keys()].filter((c) => dict.has(c));
+const byPhonetic = new Map();
+for (const c of hskChars) {
+  const ph = dict.get(c).etymology?.phonetic;
+  if (!ph) continue;
+  if (!byPhonetic.has(ph)) byPhonetic.set(ph, []);
+  byPhonetic.get(ph).push(c);
+}
+const mini = (x) => ({ c: x, p: dict.get(x)?.pinyin?.[0] || '', d: brief(x).d, l: charLevel.get(x) || 0 });
+
+function writeChar(c, extra) {
   const d = dict.get(c);
-  if (!d) continue;
+  if (!d) return false;
   const g = graphics.get(c);
   const parts = topParts(d.decomposition || '');
   const comp = {};
@@ -206,10 +278,32 @@ for (const c of charLevel.keys()) {
     comp,
     s: g ? g.strokes : [],
     m: d.matches.map((m) => (m ? m[0] : null)),
+    ...extra,
   };
   fs.writeFileSync(path.join(OUT, 'chars', `${c.codePointAt(0).toString(16)}.json`), JSON.stringify(out));
-  charCount++;
+  return true;
 }
+
+let charCount = 0;
+const componentChars = new Set();
+for (const c of hskChars) {
+  const d = dict.get(c);
+  const ph = d.etymology?.phonetic;
+  // Characters sharing my sound part, plus characters that use *me* as their sound part.
+  const fam = [...new Set([...(ph ? byPhonetic.get(ph) : []), ...(byPhonetic.get(c) || [])])]
+    .filter((x) => x !== c)
+    .sort((a, b) => charLevel.get(a) - charLevel.get(b))
+    .slice(0, 8)
+    .map(mini);
+  const look = (lookalikeOf.get(c) || []).filter((x) => dict.has(x)).map(mini);
+  if (writeChar(c, { l: charLevel.get(c), fam, famBy: ph || (byPhonetic.has(c) ? c : ''), look })) charCount++;
+  for (const part of topParts(d.decomposition || '')) for (const x of leaves(part)) if (!charLevel.has(x)) componentChars.add(x);
+  if (d.radical && !charLevel.has(d.radical)) componentChars.add(d.radical);
+}
+// Components that aren't HSK characters themselves (氵, 忄, 讠 …) get files too, so the app
+// can draw them and show their own breakdown.
+let compCount = 0;
+for (const x of componentChars) if (writeChar(x, { l: 0, fam: [], famBy: '', look: [] })) compCount++;
 
 for (const l of LEVELS) {
   const list = words.filter((w) => w.level === l).map((w) => (w.alt ? [w.s, w.p, w.e, w.alt] : [w.s, w.p, w.e]));
@@ -217,4 +311,4 @@ for (const l of LEVELS) {
   fs.writeFileSync(path.join(OUT, 'ex', `hsk${l}.json`), JSON.stringify(examples[l]));
   console.log(`HSK ${l}: ${list.length} words, ${Object.keys(examples[l]).length} examples`);
 }
-console.log(`wrote ${charCount} character files`);
+console.log(`wrote ${charCount} character files + ${compCount} component files`);
