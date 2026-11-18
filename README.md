@@ -1,6 +1,6 @@
 # snerdChinese
 
-A quiet, distraction-free page with every HSK 1–6 word (HSK 2.0 lists, about 5,000 words).
+A quiet, distraction-free page with every HSK 3.0 word: levels 1–6 plus the advanced 7–9 band (about 11,000 words, 2021 standard).
 
 **Live site:** https://jacobgoodchild.github.io/snerdChinese/
 

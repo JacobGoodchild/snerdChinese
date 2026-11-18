@@ -56,7 +56,9 @@ kbd {
   font-size: 18px;
 }
 .brand span { font-family: var(--zh); font-weight: 500; color: var(--accent); margin-left: 1px; }
-.levels { display: flex; gap: 4px; }
+.levels { display: flex; gap: 4px; align-items: baseline; }
+.levels a { white-space: nowrap; }
+.nav-label { display: none; font-size: 13px; color: var(--faint); margin-right: 2px; }
 .levels a {
   text-decoration: none;
   color: var(--muted);
@@ -94,7 +96,7 @@ kbd {
 /* ---------- sections ---------- */
 main { max-width: 1120px; margin: 0 auto; padding: 0 16px 40px; }
 .loading { color: var(--muted); padding: 40px 0; }
-.level { padding-top: 40px; scroll-margin-top: 8px; }
+.level { padding-top: 40px; scroll-margin-top: 8px; content-visibility: auto; contain-intrinsic-size: auto 1200px; }
 .level-head {
   display: flex;
   align-items: baseline;
@@ -258,6 +260,9 @@ button.part:hover { background: var(--bg); }
   .char { grid-template-columns: 84px 1fr; }
   .char svg.glyph, .glyph-fallback { width: 84px; height: 84px; }
   .search-wrap { order: 5; width: 100%; }
+  .nav-label { display: inline; }
+  .nav-hsk { display: none; }
+  .levels a { padding: 2px 6px; }
   #search, #search:focus { width: 100%; }
   .search-hint { position: static; display: block; }
   .hint { display: none; }

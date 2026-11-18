@@ -19,8 +19,9 @@ try {
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(url);
   await page.waitForSelector('.tile');
-  assert.ok((await page.locator('.tile').count()) > 4950);
-  step('renders all HSK 1–6 words');
+  assert.ok((await page.locator('.tile').count()) > 10900);
+  assert.equal(await page.locator('#hsk7 h2').textContent(), 'HSK 7–9');
+  step('renders all HSK 3.0 words');
 
   // Seed reviews at different ages and check the colour decay.
   await page.evaluate(() => {

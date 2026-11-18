@@ -17,14 +17,17 @@ interface CharData {
 interface Item { word: Word; level: number; el: HTMLButtonElement; }
 
 const BASE = import.meta.env.BASE_URL + 'data/';
+// HSK 3.0 (2021 standard). Level 7 holds the combined advanced band, levels 7–9.
 const LEVELS = [
-  { n: 1, total: 150, sub: 'The first 150 words — greetings, numbers, family and your very first sentences.' },
-  { n: 2, total: 300, sub: '300 words in total — simple, direct exchanges about everyday things.' },
-  { n: 3, total: 600, sub: '600 words in total — handle daily life, study, work and travel.' },
-  { n: 4, total: 1200, sub: '1,200 words in total — talk fluently about a wide range of topics.' },
-  { n: 5, total: 2500, sub: '2,500 words in total — read newspapers, watch films, give a full speech.' },
-  { n: 6, total: 5000, sub: '5,000 words in total — understand what you read and hear, and say what you mean.' },
+  { n: 1, name: 'HSK 1', sub: 'The first 500 words — greetings, numbers, family and simple everyday sentences.' },
+  { n: 2, name: 'HSK 2', sub: '1,272 words in total — short, everyday conversations about familiar things.' },
+  { n: 3, name: 'HSK 3', sub: '2,245 words in total — handle daily life, study, work and travel.' },
+  { n: 4, name: 'HSK 4', sub: '3,245 words in total — talk with ease about a wide range of familiar topics.' },
+  { n: 5, name: 'HSK 5', sub: '4,316 words in total — read news, follow films and join in discussions.' },
+  { n: 6, name: 'HSK 6', sub: '5,456 words in total — express yourself fluently on most topics.' },
+  { n: 7, name: 'HSK 7–9', sub: '11,092 words in total — the advanced band: academic, professional and literary Chinese.' },
 ];
+const levelName = (n: number) => LEVELS.find((l) => l.n === n)?.name ?? `HSK ${n}`;
 
 const app = document.getElementById('app')!;
 const reviews: Reviews = loadReviews();
@@ -90,30 +93,41 @@ const SPEAKER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stro
 function tileClass(s: string) { return s.length >= 5 ? 'tile xlong' : s.length === 4 ? 'tile long' : 'tile'; }
 
 async function init() {
-  const lists = await Promise.all(LEVELS.map((l) => fetchJSON<Word[]>(`${BASE}hsk${l.n}.json`)));
-  app.innerHTML = '';
+  // Fetch every level at once, but draw them in order as they arrive, giving the browser a
+  // breather between levels so HSK 1 shows up straight away.
+  const pending = LEVELS.map((l) => fetchJSON<Word[]>(`${BASE}hsk${l.n}.json`));
   const nav = document.getElementById('levelNav')!;
-  LEVELS.forEach((lvl, k) => {
-    nav.insertAdjacentHTML('beforeend', `<a href="#hsk${lvl.n}">HSK ${lvl.n}</a>`);
+  let first = true;
+  for (const [k, lvl] of LEVELS.entries()) {
+    const list = await pending[k];
+    if (first) { app.innerHTML = ''; first = false; }
+    if (k === 0) nav.insertAdjacentHTML('beforeend', '<span class="nav-label">HSK</span>');
+    nav.insertAdjacentHTML('beforeend', `<a href="#hsk${lvl.n}"><span class="nav-hsk">HSK </span>${lvl.name.replace('HSK ', '')}</a>`);
     const sec = document.createElement('section');
     sec.className = 'level';
     sec.id = `hsk${lvl.n}`;
+    // Rough height so off-screen levels can be skipped by the browser (content-visibility).
+    const cols = Math.max(1, Math.floor((Math.min(window.innerWidth, 1120) - 32 + 6) / (window.innerWidth <= 640 ? 81 : 102)));
+    sec.style.containIntrinsicSize = `auto ${Math.ceil(list.length / cols) * 66 + 140}px`;
     const start = items.length;
     sec.innerHTML = `
-      <div class="level-head"><h2>HSK ${lvl.n}</h2><span class="count"></span></div>
+      <div class="level-head"><h2>${lvl.name}</h2><span class="count"></span></div>
       <p class="level-sub">${lvl.sub}</p>
       <div class="progress"><i></i></div>
-      <div class="grid">${lists[k].map((w, j) => `<button class="${tileClass(w[0])}" data-i="${start + j}" lang="zh-CN">${w[0]}</button>`).join('')}</div>`;
+      <div class="grid">${list.map((w, j) => `<button class="${tileClass(w[0])}" data-i="${start + j}" lang="zh-CN">${w[0]}</button>`).join('')}</div>`;
     app.appendChild(sec);
     const tiles = sec.querySelectorAll<HTMLButtonElement>('.tile');
-    const lvItems = lists[k].map((word, j) => ({ word, level: lvl.n, el: tiles[j] }));
+    const lvItems = list.map((word, j) => ({ word, level: lvl.n, el: tiles[j] }));
     items.push(...lvItems);
     lvItems.forEach((it, j) => { if (!wordIndex.has(it.word[0])) wordIndex.set(it.word[0], start + j); });
     levelEls.set(lvl.n, { count: sec.querySelector('.count')!, bar: sec.querySelector('.progress i')!, items: lvItems });
-  });
-  repaintAll();
+    lvItems.forEach(paint);
+    updateCounts();
+    await new Promise((r) => setTimeout(r, 0));
+  }
+  // If the page was opened with a #hsk5 style link, jump there now that it exists.
+  if (location.hash) document.querySelector(location.hash)?.scrollIntoView();
 }
-
 // ---------- inline drawer ----------
 let open: { idx: number; drawer: HTMLElement } | null = null;
 
@@ -206,7 +220,7 @@ function renderPanel(i: number) {
           <div class="en">${esc(e)}</div>
           ${alt ? `<div class="alt">also <b>${esc(alt[0])}</b> — ${esc(alt[1])}</div>` : ''}
           <div class="tags">
-            <span class="tag">HSK ${level}</span>
+            <span class="tag">${levelName(level)}</span>
             <span class="status"></span>
           </div>
         </div>

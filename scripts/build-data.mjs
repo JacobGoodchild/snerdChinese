@@ -1,5 +1,5 @@
 // Builds the static JSON data the app loads, from three open-source datasets:
-//   - drkameleon/complete-hsk-vocabulary  (HSK 2.0 "old" levels 1–6 word lists)
+//   - drkameleon/complete-hsk-vocabulary  (HSK 3.0 word lists: levels 1–6 and the combined 7–9 band)
 //   - skishore/makemeahanzi               (character decompositions, etymology, stroke SVGs)
 //   - Tatoeba (CC-BY 2.0 FR)              (real Chinese→English example sentences)
 //
@@ -43,16 +43,17 @@ const read = (f) => fs.readFileSync(path.join(CACHE, f), 'utf8');
 const lines = (f) => read(f).split('\n').filter(Boolean);
 
 // ---------- 1. HSK words ----------
-const LEVELS = [1, 2, 3, 4, 5, 6];
+// HSK 3.0 (2021 standard). Level 7 here means the combined "7–9" advanced band.
+const LEVELS = [1, 2, 3, 4, 5, 6, 7];
 const raw = JSON.parse(read('hsk.json'));
 const isVariant = (m) => /^(old |unofficial |archaic |)variant of|^see |^abbr\. for|^surname |^\(Tw\)|al-Qaeda|^used in /i.test(m);
 
 const words = []; // {s, level, p, e, alt}
 const spacedPinyin = new Map(); // word -> 'péng you' (dictionary pinyin, per syllable)
 for (const w of raw) {
-  const old = w.level.filter((l) => l.startsWith('old-')).map((l) => +l.slice(4));
-  if (!old.length) continue;
-  const level = Math.min(...old);
+  const lv = w.level.filter((l) => l.startsWith('new-')).map((l) => +l.slice(4));
+  if (!lv.length) continue;
+  const level = Math.min(...lv);
   const [main, ...rest] = w.forms;
   const p = main.transcriptions.pinyin.replace(/\s+/g, '');
   const meanings = main.meanings.filter((m) => !isVariant(m));
@@ -93,10 +94,10 @@ for (const l of lines('cmn.tsv')) {
   if (han.length < 4 || han.length > 26) continue;
   // Only Chinese characters and Chinese punctuation (no Latin, digits or emoji).
   if (!han.every((c) => HAN.test(c))) continue;
-  // Allow at most two characters beyond the HSK 1–6 set (they make the sentence harder, scored below).
+  // Allow at most two characters beyond the HSK 1–9 set (they make the sentence harder, scored below).
   const extra = han.filter((c) => !charLevel.has(c)).length;
   if (extra > 2) continue;
-  zh.set(id, { t, converted, len: han.length, extra, max: Math.max(...han.map((c) => charLevel.get(c) ?? 7)) });
+  zh.set(id, { t, converted, len: han.length, extra, max: Math.max(...han.map((c) => charLevel.get(c) ?? 8)) });
 }
 const zhToEn = new Map();
 for (const l of lines('cmn-eng.tsv')) {
@@ -186,7 +187,7 @@ for (const w of words) {
   for (const i of pool) {
     const s = sentences[i];
     if (!s.t.includes(w.s)) continue;
-    let score = (s.converted ? 1.5 : 0) + 10 * Math.max(0, Math.min(s.max, 7) - w.level) + 6 * s.extra + 0.35 * Math.abs(s.len - 11);
+    let score = (s.converted ? 1.5 : 0) + 10 * Math.max(0, Math.min(s.max, 8) - w.level) + 6 * s.extra + 0.35 * Math.abs(s.len - 11);
     if (!cleanHit(s.t, w.s)) score += 12;
     scored.push([score, s]);
   }
@@ -230,12 +231,15 @@ const brief = (c) => {
   return d ? { d: (d.definition || '').split(/[;,]/)[0].trim(), p: d.pinyin?.[0] || '' } : { d: '', p: '' };
 };
 
-fs.rmSync(OUT, { recursive: true, force: true });
+// Clear old generated files (but keep hand-written ones like LICENSES.md).
+for (const f of fs.existsSync(OUT) ? fs.readdirSync(OUT) : []) {
+  if (f === 'chars' || f === 'ex' || /^hsk\d+\.json$/.test(f)) fs.rmSync(path.join(OUT, f), { recursive: true, force: true });
+}
 fs.mkdirSync(path.join(OUT, 'chars'), { recursive: true });
 fs.mkdirSync(path.join(OUT, 'ex'), { recursive: true });
 
 // Visually confusable characters (hand-picked classic look-alike sets). Only members that
-// actually appear in HSK 1–6 are shown.
+// actually appear in HSK 1–9 are shown.
 const LOOKALIKES = [
   '己已巳', '未末', '人入八', '土士', '日曰', '天夭', '大太犬', '王玉主', '刀力', '干千于', '午牛',
   '白百', '失夫', '免兔', '贝见', '买卖', '今令', '问间', '休体', '找我', '住往', '鸟乌', '徒徙',
